@@ -62,19 +62,19 @@ void Tsuki::Start() {
 		cLight.SoftShadows = false;
 	}
 
-	{
+	if (false) {
 		auto model = _gltfLoader->Load("Assets/Models/DeccerCubes/SM_Deccer_Cubes_Textured.gltf", *_scene);
 		model.Rotate(glm::vec3(15.0f, -30.0f, 0.0f));
 		model.Scale(0.2f);
 	}
 
-	{
+	if (false) {
 		auto model = _gltfLoader->Load("Assets/Models/DamagedHelmet/DamagedHelmet.gltf", *_scene);
 		model.Translate(glm::vec3(-2.0f, 0.0f, 0.0f));
 		model.Scale(0.5f);
 	}
 
-	{
+	if (false) {
 		auto model = _gltfLoader->Load("Assets/Models/BoomBox/BoomBox.gltf", *_scene);
 		model.Translate(glm::vec3(2.0f, 0.0f, 0.0f));
 		model.Scale(50.0f);

@@ -3,6 +3,7 @@
 #include <Assets/Material.hpp>
 #include <Assets/Texture.hpp>
 #include <Scene/Entity.hpp>
+#include <Utility/AABB.hpp>
 #include <Vulkan/Common.hpp>
 #include <glm/glm.hpp>
 
@@ -42,6 +43,7 @@ class SceneRenderer {
 		glm::vec4 Position;
 		DirectionalLight Light;
 		float LightSize;
+		int CastShadows;
 		int SoftShadows;
 		int DebugShowCascades;
 	};
@@ -68,8 +70,13 @@ class SceneRenderer {
 	};
 
 	void BindUniforms(Luna::Vulkan::CommandBufferHandle& cmd, uint32_t frameIndex);
+	Luna::AABB GetCameraFrustum(Luna::Entity& cameraEntity);
 	void PrepareCascades(Luna::Scene& scene, Luna::Entity& cameraEntity, Luna::Entity& sunEntity, uint32_t frameIndex);
-	void RenderMeshes(Luna::Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene, uint32_t frameIndex, RenderStage stage);
+	void RenderMeshes(Luna::Vulkan::CommandBufferHandle& cmd,
+	                  Luna::Scene& scene,
+	                  Luna::Entity& cameraEntity,
+	                  uint32_t frameIndex,
+	                  RenderStage stage);
 	void SetTexture(Luna::Vulkan::CommandBufferHandle& cmd,
 	                uint32_t set,
 	                uint32_t binding,
@@ -92,6 +99,7 @@ class SceneRenderer {
 
 	bool _shadowPCF = false;
 
-	bool _debugCSM      = false;
-	bool _debugCSMSplit = false;
+	bool _debugCSM         = false;
+	bool _debugCSMSplit    = false;
+	bool _debugFrustumCull = false;
 };

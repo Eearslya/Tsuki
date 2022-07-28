@@ -98,6 +98,7 @@ layout(set = 0, binding = 0) uniform SceneData {
 	vec4 CameraPosition;
 	DirectionalLight Light;
 	float LightSize;
+	bool CastShadows;
 	bool SoftShadows;
 	bool ShowCascades;
 } Scene;
@@ -272,29 +273,31 @@ void main() {
 	F0 = mix(F0, PBR.Albedo, PBR.Metallic);
 
 	uint cascadeIndex = 0;
-	for (uint i = 0; i < ShadowCascadeCount - 1; ++i) {
-		if (In.ViewPos.z < Scene.CascadeSplits[i]) { cascadeIndex = i + 1; }
-	}
-	float shadowDistance = 200.0f;
-	float transitionDistance = 1.0f;
-	float distance = length(In.ViewPos);
-	PBR.ShadowFade = distance - (shadowDistance - transitionDistance);
-	PBR.ShadowFade /= transitionDistance;
-	PBR.ShadowFade = clamp(1.0 - PBR.ShadowFade, 0.0, 1.0);
 	float shadowScale = 1.0f;
-	bool fadeCascades = false;
-	if (fadeCascades) {
-		float cascadeTransitionFade = 1.0f;
-
-		float c0 = smoothstep(Scene.CascadeSplits[0] + cascadeTransitionFade * 0.5f, Scene.CascadeSplits[0] - cascadeTransitionFade * 0.5f, In.ViewPos.z);
-		float c1 = smoothstep(Scene.CascadeSplits[1] + cascadeTransitionFade * 0.5f, Scene.CascadeSplits[1] - cascadeTransitionFade * 0.5f, In.ViewPos.z);
-		float c2 = smoothstep(Scene.CascadeSplits[2] + cascadeTransitionFade * 0.5f, Scene.CascadeSplits[2] - cascadeTransitionFade * 0.5f, In.ViewPos.z);
-
-		if (c0 > 0.0 && c0 < 1.0) {
+	if (Scene.CastShadows) {
+		for (uint i = 0; i < ShadowCascadeCount - 1; ++i) {
+			if (In.ViewPos.z < Scene.CascadeSplits[i]) { cascadeIndex = i + 1; }
 		}
-	} else {
-		vec3 shadowCoords = In.ShadowCoords[cascadeIndex].xyz / In.ShadowCoords[cascadeIndex].w;
-		shadowScale = Scene.SoftShadows ? PCSSDirectional(TexShadowMap, cascadeIndex, shadowCoords, Scene.LightSize) : HardShadowsDirectional(TexShadowMap, cascadeIndex, shadowCoords);
+		float shadowDistance = 200.0f;
+		float transitionDistance = 1.0f;
+		float distance = length(In.ViewPos);
+		PBR.ShadowFade = distance - (shadowDistance - transitionDistance);
+		PBR.ShadowFade /= transitionDistance;
+		PBR.ShadowFade = clamp(1.0 - PBR.ShadowFade, 0.0, 1.0);
+		bool fadeCascades = false;
+		if (fadeCascades) {
+			float cascadeTransitionFade = 1.0f;
+
+			float c0 = smoothstep(Scene.CascadeSplits[0] + cascadeTransitionFade * 0.5f, Scene.CascadeSplits[0] - cascadeTransitionFade * 0.5f, In.ViewPos.z);
+			float c1 = smoothstep(Scene.CascadeSplits[1] + cascadeTransitionFade * 0.5f, Scene.CascadeSplits[1] - cascadeTransitionFade * 0.5f, In.ViewPos.z);
+			float c2 = smoothstep(Scene.CascadeSplits[2] + cascadeTransitionFade * 0.5f, Scene.CascadeSplits[2] - cascadeTransitionFade * 0.5f, In.ViewPos.z);
+
+			if (c0 > 0.0 && c0 < 1.0) {
+			}
+		} else {
+			vec3 shadowCoords = In.ShadowCoords[cascadeIndex].xyz / In.ShadowCoords[cascadeIndex].w;
+			shadowScale = Scene.SoftShadows ? PCSSDirectional(TexShadowMap, cascadeIndex, shadowCoords, Scene.LightSize) : HardShadowsDirectional(TexShadowMap, cascadeIndex, shadowCoords);
+		}
 	}
 
 	vec3 lightContrib = DirectionalLights(F0) * shadowScale;

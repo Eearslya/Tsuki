@@ -450,6 +450,7 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 				const auto& data = primData[prim];
 				auto& submesh    = mesh.Submeshes[prim];
 
+				submesh.Bounds        = data.Bounds;
 				submesh.VertexCount   = data.VertexCount;
 				submesh.IndexCount    = data.IndexCount;
 				submesh.FirstVertex   = data.FirstVertex;

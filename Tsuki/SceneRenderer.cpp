@@ -146,6 +146,7 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 
 	// Find the important entities for rendering.
 	Entity cameraEntity, sunEntity;
+	bool castShadows = false;
 	{
 		cameraEntity = scene.GetMainCamera();
 
@@ -153,10 +154,9 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 		for (auto entityId : lights) {
 			Entity entity(entityId, scene);
 			auto& cLight = lights.get<DirectionalLightComponent>(entityId);
-			if (cLight.CastShadows) {
-				sunEntity = entity;
-				break;
-			}
+			sunEntity    = entity;
+			castShadows  = cLight.CastShadows;
+			break;
 		}
 	}
 
@@ -182,13 +182,24 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 		u.SceneData->ViewProjection = cameraProj * cameraView;
 		// u.SceneData->InvViewProjection = glm::inverse(u.SceneData->ViewProjection);
 		u.SceneData->Position = glm::vec4(cCameraTransform.Translation, 1.0f);
+	} else {
+		castShadows = false;
 	}
 
 	// Update Shadow buffer.
 	if (cameraEntity && sunEntity) {
 		auto& cLight = sunEntity.GetComponent<DirectionalLightComponent>();
 
-		// Create our shadow map image if it doesn't exist already.
+		u.SceneData->LightSize         = cLight.LightSize;
+		u.SceneData->DebugShowCascades = _debugCSMSplit;
+		u.SceneData->SoftShadows       = cLight.SoftShadows;
+
+		// Calculate cascade distances and matrices.
+		PrepareCascades(scene, cameraEntity, sunEntity, frameIndex);
+	}
+
+	// Create or destroy our shadow map depending on whether we need shadows.
+	if (castShadows) {
 		if (!_shadowMap) {
 			Vulkan::ImageCreateInfo imageCI =
 				Vulkan::ImageCreateInfo::RenderTarget(2048, 2048, _wsi.GetDevice().GetDefaultDepthFormat());
@@ -211,13 +222,9 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 				_shadowCascades.push_back(_wsi.GetDevice().CreateImageView(viewCI));
 			}
 		}
-
-		u.SceneData->LightSize         = cLight.LightSize;
-		u.SceneData->SoftShadows       = cLight.SoftShadows;
-		u.SceneData->DebugShowCascades = _debugCSMSplit;
-
-		// Calculate cascade distances and matrices.
-		PrepareCascades(scene, cameraEntity, sunEntity, frameIndex);
+	} else {
+		_shadowCascades.clear();
+		_shadowMap.Reset();
 	}
 
 	// Update Scene buffer.
@@ -229,11 +236,18 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 			u.SceneData->Light.ShadowAmount = cLight.ShadowAmount;
 			u.SceneData->Light.Radiance     = cLight.Radiance;
 			u.SceneData->Light.Intensity    = cLight.Intensity;
+			u.SceneData->CastShadows        = true;
+		} else {
+			u.SceneData->Light.Direction    = glm::vec3(0);
+			u.SceneData->Light.ShadowAmount = 0;
+			u.SceneData->Light.Radiance     = glm::vec3(0);
+			u.SceneData->Light.Intensity    = 0;
+			u.SceneData->CastShadows        = false;
 		}
 	}
 
 	// Render cascaded shadow map.
-	if (sunEntity) {
+	if (castShadows) {
 		cmd->ImageBarrier(*_shadowMap,
 		                  vk::ImageLayout::eUndefined,
 		                  vk::ImageLayout::eDepthStencilAttachmentOptimal,
@@ -258,7 +272,7 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 			cmd->SetDepthClamp(true);
 			cmd->SetProgram(_shadows);
 			cmd->PushConstants(&i, sizeof(PushConstant), sizeof(i));
-			RenderMeshes(cmd, scene, frameIndex, RenderStage::CascadedShadowMap);
+			RenderMeshes(cmd, scene, cameraEntity, frameIndex, RenderStage::CascadedShadowMap);
 			cmd->EndRenderPass();
 		}
 
@@ -312,7 +326,7 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 
 			cmd->SetOpaqueState();
 			cmd->SetProgram(_depthPre);
-			RenderMeshes(cmd, scene, frameIndex, RenderStage::DepthPrePass);
+			RenderMeshes(cmd, scene, cameraEntity, frameIndex, RenderStage::DepthPrePass);
 		}
 
 		cmd->NextSubpass();
@@ -337,14 +351,12 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 			cmd->SetProgram(_program);
 			cmd->SetDepthCompareOp(vk::CompareOp::eEqual);
 			cmd->SetDepthWrite(false);
-			if (sunEntity && _shadowMap) {
+			if (castShadows) {
 				cmd->SetTexture(0, 1, _shadowMap->GetView(), sampler);
 			} else {
-				_shadowMap.Reset();
-				_shadowCascades.clear();
 				cmd->SetTexture(0, 1, _defaultImages.WhiteCSM->GetView(), sampler);
 			}
-			RenderMeshes(cmd, scene, frameIndex, RenderStage::Lighting);
+			RenderMeshes(cmd, scene, cameraEntity, frameIndex, RenderStage::Lighting);
 		}
 
 		cmd->EndRenderPass();
@@ -386,6 +398,36 @@ void SceneRenderer::SetImageSize(const glm::uvec2& size) {
 void SceneRenderer::BindUniforms(Luna::Vulkan::CommandBufferHandle& cmd, uint32_t frameIndex) {
 	auto& u = Uniforms(frameIndex);
 	cmd->SetUniformBuffer(0, 0, *u.Scene);
+}
+
+AABB SceneRenderer::GetCameraFrustum(Luna::Entity& cameraEntity) {
+	const auto& cCamera    = cameraEntity.GetComponent<CameraComponent>();
+	const auto& cameraProj = cCamera.Camera.GetProjection();
+	const auto& cameraView = glm::inverse(cameraEntity.GetGlobalTransform());
+	const glm::mat4 invCam = glm::inverse(cameraProj * cameraView);
+
+	glm::vec3 frustumCorners[8] = {glm::vec3(-1, 1, -1),
+	                               glm::vec3(1, 1, -1),
+	                               glm::vec3(1, -1, -1),
+	                               glm::vec3(-1, -1, -1),
+	                               glm::vec3(-1, 1, 1),
+	                               glm::vec3(1, 1, 1),
+	                               glm::vec3(1, -1, 1),
+	                               glm::vec3(-1, -1, 1)};
+
+	for (int i = 0; i < 8; ++i) {
+		const glm::vec4 invCorner = invCam * glm::vec4(frustumCorners[i], 1.0f);
+		frustumCorners[i]         = invCorner / invCorner.w;
+	}
+
+	glm::vec3 min = frustumCorners[0];
+	glm::vec3 max = frustumCorners[0];
+	for (int i = 1; i < 8; ++i) {
+		min = glm::min(min, frustumCorners[i]);
+		max = glm::max(max, frustumCorners[i]);
+	}
+
+	return AABB(min, max);
 }
 
 void SceneRenderer::PrepareCascades(Luna::Scene& scene,
@@ -497,10 +539,18 @@ void SceneRenderer::PrepareCascades(Luna::Scene& scene,
 	}
 }
 
-void SceneRenderer::RenderMeshes(Luna::Vulkan::CommandBufferHandle& cmd,
-                                 Luna::Scene& scene,
-                                 uint32_t frameIndex,
-                                 RenderStage stage) {
+void SceneRenderer::RenderMeshes(
+	Vulkan::CommandBufferHandle& cmd, Scene& scene, Entity& cameraEntity, uint32_t frameIndex, RenderStage stage) {
+	static AABB frozenFrustum;
+	AABB cameraFrustum;
+	if (_debugFrustumCull) {
+		cameraFrustum = frozenFrustum;
+	} else {
+		cameraFrustum = GetCameraFrustum(cameraEntity);
+		frozenFrustum = cameraFrustum;
+	}
+	const bool frustumCull = stage == RenderStage::DepthPrePass || stage == RenderStage::Lighting;
+
 	cmd->SetVertexAttribute(0, 0, vk::Format::eR32G32B32Sfloat, 0);
 	cmd->SetVertexAttribute(1, 1, vk::Format::eR32G32Sfloat, 0);
 
@@ -512,9 +562,29 @@ void SceneRenderer::RenderMeshes(Luna::Vulkan::CommandBufferHandle& cmd,
 
 	BindUniforms(cmd, frameIndex);
 
+	const auto Intersect = [](const AABB& a, const AABB& b) -> bool {
+		const auto& aMin = a.GetMin();
+		const auto& aMax = a.GetMax();
+		const auto& bMin = b.GetMin();
+		const auto& bMax = b.GetMax();
+
+		if ((aMax.x < bMin.x) || (aMin.x > bMax.x) || (aMax.y < bMin.y) || (aMin.y > bMax.y) || (aMax.z < bMin.z) ||
+		    (aMin.z > bMax.z)) {
+			return false;
+		}
+
+		return true;
+	};
+
 	auto renderables = scene.GetRegistry().view<MeshComponent>();
 	for (auto entityId : renderables) {
 		Entity entity(entityId, scene);
+
+		if (frustumCull) {
+			const auto entityBounds = entity.GetGlobalBounds();
+			if (!Intersect(cameraFrustum, entityBounds)) { continue; }
+		}
+
 		const auto& cMesh = renderables.get<MeshComponent>(entityId);
 		const PushConstant pc{.Model = entity.GetGlobalTransform()};
 		cmd->PushConstants(&pc, 0, sizeof(PushConstant));
@@ -533,6 +603,12 @@ void SceneRenderer::RenderMeshes(Luna::Vulkan::CommandBufferHandle& cmd,
 			cmd->SetIndexBuffer(*mesh->Buffer, mesh->IndexOffset, vk::IndexType::eUint32);
 
 			for (auto& submesh : mesh->Submeshes) {
+				if (frustumCull) {
+					auto submeshBounds = submesh.Bounds;
+					submeshBounds.Transform(pc.Model);
+					if (!Intersect(cameraFrustum, submeshBounds)) { continue; }
+				}
+
 				const bool hasMaterial =
 					submesh.MaterialIndex < cMesh.Materials.size() && cMesh.Materials[submesh.MaterialIndex];
 				auto& material = hasMaterial ? cMesh.Materials[submesh.MaterialIndex] : _nullMaterial;
@@ -576,6 +652,8 @@ void SceneRenderer::SetTexture(Luna::Vulkan::CommandBufferHandle& cmd,
 
 void SceneRenderer::ShowSettings() {
 	if (ImGui::Begin("Renderer")) {
+		ImGui::Checkbox("Freeze Frustum", &_debugFrustumCull);
+
 		if (ImGui::CollapsingHeader(ICON_FA_MOON " Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
 			if (ImGui::BeginTable("LightComponent_Properties", 2, ImGuiTableFlags_BordersInnerV)) {
 				ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_WidthFixed, 125.0f);

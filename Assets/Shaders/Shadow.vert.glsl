@@ -20,6 +20,7 @@ layout(set = 0, binding = 0) uniform SceneData {
 	vec4 CameraPosition;
 	DirectionalLight Light;
 	float LightSize;
+	bool CastShadows;
 	bool SoftShadows;
 	bool ShowCascades;
 } Scene;
