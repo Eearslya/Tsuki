@@ -59,6 +59,7 @@ void Tsuki::Start() {
 		auto& xfLight      = light.Transform();
 		auto& cLight       = light.AddComponent<DirectionalLightComponent>();
 		xfLight.Rotation   = glm::vec3(85.0f, 20.0f, 0.0f);
+		cLight.CastShadows = false;
 		cLight.SoftShadows = false;
 	}
 

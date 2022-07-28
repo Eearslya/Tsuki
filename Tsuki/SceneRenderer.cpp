@@ -229,6 +229,8 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 
 	// Update Scene buffer.
 	{
+		u.SceneData->CastShadows = castShadows;
+
 		if (sunEntity) {
 			const auto& cLight = sunEntity.GetComponent<DirectionalLightComponent>();
 
@@ -236,13 +238,11 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 			u.SceneData->Light.ShadowAmount = cLight.ShadowAmount;
 			u.SceneData->Light.Radiance     = cLight.Radiance;
 			u.SceneData->Light.Intensity    = cLight.Intensity;
-			u.SceneData->CastShadows        = true;
 		} else {
 			u.SceneData->Light.Direction    = glm::vec3(0);
 			u.SceneData->Light.ShadowAmount = 0;
 			u.SceneData->Light.Radiance     = glm::vec3(0);
 			u.SceneData->Light.Intensity    = 0;
-			u.SceneData->CastShadows        = false;
 		}
 	}
 

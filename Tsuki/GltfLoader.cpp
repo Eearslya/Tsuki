@@ -143,6 +143,11 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 		images.push_back(_wsi->GetDevice().CreateImage(imageCI, &initialData));
 	}
 
+	const bool quantized =
+		std::find(gltfModel.extensionsRequired.begin(), gltfModel.extensionsRequired.end(), "KHR_mesh_quantization") !=
+		gltfModel.extensionsRequired.end();
+	if (quantized) { Log::Info("GltfLoader", "{} uses KHR_mesh_quantization.", gltfFile); }
+
 	std::vector<Vulkan::Sampler*> samplers;
 	for (size_t i = 0; i < gltfModel.samplers.size(); ++i) {
 		const auto& gltfSampler = gltfModel.samplers[i];
@@ -273,6 +278,14 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 		const void* TangentData    = nullptr;
 		const void* Texcoord0Data  = nullptr;
 		const void* IndexData      = nullptr;
+		vk::Format PositionFormat  = vk::Format::eR32G32B32Sfloat;
+		vk::Format NormalFormat    = vk::Format::eR32G32B32Sfloat;
+		vk::Format TangentFormat   = vk::Format::eR32G32B32Sfloat;
+		vk::Format Texcoord0Format = vk::Format::eR32G32Sfloat;
+		bool PositionNormalized    = false;
+		bool NormalNormalized      = false;
+		bool TangentNormalized     = false;
+		bool Texcoord0Normalized   = false;
 
 		std::vector<glm::vec4> Tangents;
 		std::vector<glm::vec3> Bitangents;
@@ -332,6 +345,78 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 		mikktContext.m_pInterface = &mikktInterface;
 	}
 
+	const auto ConvertFormat = [](int type, int comp) -> vk::Format {
+		switch (comp) {
+			case TINYGLTF_COMPONENT_TYPE_BYTE:
+				switch (type) {
+					case TINYGLTF_TYPE_SCALAR:
+						return vk::Format::eR8Sint;
+					case TINYGLTF_TYPE_VEC2:
+						return vk::Format::eR8G8Sint;
+					case TINYGLTF_TYPE_VEC3:
+						return vk::Format::eR8G8B8Sint;
+					case TINYGLTF_TYPE_VEC4:
+						return vk::Format::eR8G8B8A8Sint;
+				}
+				break;
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+				switch (type) {
+					case TINYGLTF_TYPE_SCALAR:
+						return vk::Format::eR8Uint;
+					case TINYGLTF_TYPE_VEC2:
+						return vk::Format::eR8G8Uint;
+					case TINYGLTF_TYPE_VEC3:
+						return vk::Format::eR8G8B8Uint;
+					case TINYGLTF_TYPE_VEC4:
+						return vk::Format::eR8G8B8A8Uint;
+				}
+				break;
+
+			case TINYGLTF_COMPONENT_TYPE_SHORT:
+				switch (type) {
+					case TINYGLTF_TYPE_SCALAR:
+						return vk::Format::eR16Sint;
+					case TINYGLTF_TYPE_VEC2:
+						return vk::Format::eR16G16Sint;
+					case TINYGLTF_TYPE_VEC3:
+						return vk::Format::eR16G16B16Sint;
+					case TINYGLTF_TYPE_VEC4:
+						return vk::Format::eR16G16B16A16Sint;
+				}
+				break;
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+				switch (type) {
+					case TINYGLTF_TYPE_SCALAR:
+						return vk::Format::eR16Uint;
+					case TINYGLTF_TYPE_VEC2:
+						return vk::Format::eR16G16Uint;
+					case TINYGLTF_TYPE_VEC3:
+						return vk::Format::eR16G16B16Uint;
+					case TINYGLTF_TYPE_VEC4:
+						return vk::Format::eR16G16B16A16Uint;
+				}
+				break;
+
+			case TINYGLTF_COMPONENT_TYPE_FLOAT:
+				switch (type) {
+					case TINYGLTF_TYPE_SCALAR:
+						return vk::Format::eR32Sfloat;
+					case TINYGLTF_TYPE_VEC2:
+						return vk::Format::eR32G32Sfloat;
+					case TINYGLTF_TYPE_VEC3:
+						return vk::Format::eR32G32B32Sfloat;
+					case TINYGLTF_TYPE_VEC4:
+						return vk::Format::eR32G32B32A32Sfloat;
+				}
+				break;
+
+			default:
+				break;
+		}
+
+		return vk::Format::eUndefined;
+	};
+
 	std::vector<IntrusivePtr<Mesh>> meshes;
 	for (size_t i = 0; i < gltfModel.meshes.size(); ++i) {
 		const auto& gltfMesh = gltfModel.meshes[i];
@@ -366,15 +451,42 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 						data.Bounds =
 							AABB(glm::make_vec3(gltfAccessor.minValues.data()), glm::make_vec3(gltfAccessor.maxValues.data()));
 						mesh.Bounds.Contain(data.Bounds);
-						data.VertexCount  = gltfAccessor.count;
-						data.PositionData = bufferData;
+						data.VertexCount        = gltfAccessor.count;
+						data.PositionData       = bufferData;
+						data.PositionFormat     = ConvertFormat(gltfAccessor.type, gltfAccessor.componentType);
+						data.PositionNormalized = gltfAccessor.normalized;
 					} else if (attributeName.compare("NORMAL") == 0) {
-						data.NormalData = bufferData;
+						data.NormalData       = bufferData;
+						data.NormalFormat     = ConvertFormat(gltfAccessor.type, gltfAccessor.componentType);
+						data.NormalNormalized = gltfAccessor.normalized;
 					} else if (attributeName.compare("TANGENT") == 0) {
-						data.TangentData = bufferData;
+						data.TangentData       = bufferData;
+						data.TangentFormat     = ConvertFormat(gltfAccessor.type, gltfAccessor.componentType);
+						data.TangentNormalized = gltfAccessor.normalized;
 					} else if (attributeName.compare("TEXCOORD_0") == 0) {
-						data.Texcoord0Data = bufferData;
+						data.Texcoord0Data       = bufferData;
+						data.Texcoord0Format     = ConvertFormat(gltfAccessor.type, gltfAccessor.componentType);
+						data.Texcoord0Normalized = gltfAccessor.normalized;
 					}
+				}
+
+				if (quantized) {
+					Log::Info("GltfLoader",
+					          "Position: {} {}",
+					          vk::to_string(data.PositionFormat),
+					          data.PositionNormalized ? "Normalized" : "Unnormalized");
+					Log::Info("GltfLoader",
+					          "Normal: {} {}",
+					          vk::to_string(data.NormalFormat),
+					          data.NormalNormalized ? "Normalized" : "Unnormalized");
+					Log::Info("GltfLoader",
+					          "Tangent: {} {}",
+					          vk::to_string(data.TangentFormat),
+					          data.TangentNormalized ? "Normalized" : "Unnormalized");
+					Log::Info("GltfLoader",
+					          "Texcoord0: {} {}",
+					          vk::to_string(data.Texcoord0Format),
+					          data.Texcoord0Normalized ? "Normalized" : "Unnormalized");
 				}
 
 				if (gltfPrimitive.indices >= 0) {
