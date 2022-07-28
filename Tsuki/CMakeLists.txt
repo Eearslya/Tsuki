@@ -18,6 +18,7 @@ target_link_libraries(Tsuki
 	PRIVATE Luna tinygltf)
 
 target_sources(Tsuki PRIVATE
+	mikktspace.cpp
 	GltfLoader.cpp
 	Primitives.cpp
 	SceneHierarchyPanel.cpp

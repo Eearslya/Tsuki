@@ -1,35 +1,68 @@
 #version 450 core
 
+const mat4 BiasMat = mat4(
+	0.5, 0.0, 0.0, 0.0,
+	0.0, 0.5, 0.0, 0.0,
+	0.0, 0.0, 1.0, 0.0,
+	0.5, 0.5, 0.0, 1.0
+);
+const int ShadowCascadeCount = 4;
+
+struct DirectionalLight {
+	vec3 Direction;
+	float ShadowAmount;
+	vec3 Radiance;
+	float Intensity;
+};
+
 layout(location = 0) in vec3 inPosition;
-layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec2 inUV0;
+layout(location = 1) in vec2 inUV0;
+layout(location = 2) in vec3 inNormal;
+layout(location = 3) in vec3 inTangent;
+layout(location = 4) in vec3 inBitangent;
 
 layout(set = 0, binding = 0) uniform SceneData {
-	mat4 Projection;
+	mat4 ViewProjection;
 	mat4 View;
-	mat4[4] LightMatrices;
+	mat4 LightMatrices[ShadowCascadeCount];
 	vec4 CascadeSplits;
-	vec4 CameraPos;
-	vec4 SunDirection;
-	int ShadowPCF;
+	vec4 CameraPosition;
+	DirectionalLight Light;
+	float LightSize;
+	bool SoftShadows;
+	bool ShowCascades;
 } Scene;
 
 layout(push_constant) uniform PushConstant {
 	mat4 Model;
 } PC;
 
-layout(location = 0) out vec3 outWorldPos;
-layout(location = 1) out vec3 outViewPos;
-layout(location = 2) out vec3 outNormal;
-layout(location = 3) out vec2 outUV0;
+struct VertexOut {
+	vec3 WorldPos;
+	vec3 ViewPos;
+	vec3 Normal;
+	vec2 UV0;
+	mat3 NormalMat;
+	vec4 ShadowCoords[ShadowCascadeCount];
+};
+
+layout(location = 0) out VertexOut Out;
 
 void main() {
 	vec4 locPos;
 	locPos = PC.Model * vec4(inPosition, 1.0);
-	outNormal = normalize(transpose(inverse(mat3(PC.Model))) * inNormal);
-	outWorldPos = locPos.xyz / locPos.w;
-	outViewPos = (Scene.View * locPos).xyz;
-	outUV0 = inUV0;
+	Out.WorldPos = locPos.xyz / locPos.w;
 
-	gl_Position = Scene.Projection * Scene.View * vec4(outWorldPos, 1.0);
+	Out.Normal = normalize(transpose(inverse(mat3(PC.Model))) * inNormal);
+	Out.ViewPos = (Scene.View * locPos).xyz;
+	Out.UV0 = inUV0;
+
+	Out.NormalMat = mat3(PC.Model) * mat3(inTangent, inBitangent, inNormal);
+
+	Out.ShadowCoords[0] = (BiasMat * Scene.LightMatrices[0]) * vec4(Out.WorldPos, 1.0f);
+	Out.ShadowCoords[1] = (BiasMat * Scene.LightMatrices[1]) * vec4(Out.WorldPos, 1.0f);
+	Out.ShadowCoords[2] = (BiasMat * Scene.LightMatrices[2]) * vec4(Out.WorldPos, 1.0f);
+	Out.ShadowCoords[3] = (BiasMat * Scene.LightMatrices[3]) * vec4(Out.WorldPos, 1.0f);
+
+	gl_Position = Scene.ViewProjection * vec4(Out.WorldPos, 1.0);
 }

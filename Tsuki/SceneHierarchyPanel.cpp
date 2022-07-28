@@ -15,8 +15,8 @@
 #include <Utility/Log.hpp>
 #include <optional>
 
+#include "DirectionalLightComponent.hpp"
 #include "IconsFontAwesome6.h"
-#include "LightComponent.hpp"
 
 using namespace Luna;
 
@@ -76,7 +76,7 @@ void SceneHierarchyPanel::Render() {
 			bool anyShown = false;
 
 			anyShown |= AddComponentMenu<CameraComponent>(_selected, ICON_FA_CAMERA " Camera");
-			anyShown |= AddComponentMenu<LightComponent>(_selected, ICON_FA_LIGHTBULB " Light");
+			anyShown |= AddComponentMenu<DirectionalLightComponent>(_selected, ICON_FA_SUN " Directional Light");
 			anyShown |= AddComponentMenu<MeshComponent>(_selected, ICON_FA_CIRCLE_NODES " Mesh");
 
 			if (!anyShown) {
@@ -410,26 +410,23 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 			return deleted;
 		});
 
-	// Light
-	DrawComponent<LightComponent>(
+	// Directional Light
+	DrawComponent<DirectionalLightComponent>(
 		entity,
-		ICON_FA_LIGHTBULB " Light",
+		ICON_FA_SUN " Directional Light",
 		[this](Entity entity, auto& cLight) {
-			if (ImGui::BeginTable("LightComponent_Properties", 2, ImGuiTableFlags_BordersInnerV)) {
+			if (ImGui::BeginTable("DirectionalLightComponent_Properties", 2, ImGuiTableFlags_BordersInnerV)) {
 				ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_WidthFixed, 125.0f);
 
-				const char* lightTypes[] = {"Directional", "Point", "Spot"};
 				ImGui::TableNextColumn();
-				ImGui::Text("Type");
+				ImGui::Text("Radiance");
 				ImGui::TableNextColumn();
-				if (ImGui::BeginCombo("##LightType", lightTypes[int(cLight.Type)])) {
-					for (int i = 0; i < 3; ++i) {
-						bool selected = int(cLight.Type) == i;
-						if (ImGui::Selectable(lightTypes[i], selected)) { cLight.Type = LightType(i); }
-						if (selected) { ImGui::SetItemDefaultFocus(); }
-					}
-					ImGui::EndCombo();
-				}
+				ImGui::ColorEdit3("##Radiance", glm::value_ptr(cLight.Radiance));
+
+				ImGui::TableNextColumn();
+				ImGui::Text("Intensity");
+				ImGui::TableNextColumn();
+				ImGui::DragFloat("##Intensity", &cLight.Intensity, 0.5f, 0.01f, 1000.0f, "%.2f");
 
 				ImGui::TableNextColumn();
 				ImGui::Text("Cast Shadows");
@@ -437,48 +434,20 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 				ImGui::Checkbox("##CastShadows", &cLight.CastShadows);
 
 				if (cLight.CastShadows) {
-					int shadowResIdx = 3;
-					switch (cLight.ShadowMapResolution) {
-						case 256:
-							shadowResIdx = 0;
-							break;
-						case 512:
-							shadowResIdx = 1;
-							break;
-						case 1024:
-							shadowResIdx = 2;
-							break;
-						default:
-						case 2048:
-							shadowResIdx = 3;
-							break;
-						case 4096:
-							shadowResIdx = 4;
-							break;
-					}
-					const char* resNames[] = {"256", "512", "1024", "2048", "4096"};
 					ImGui::TableNextColumn();
-					ImGui::Text("Shadow Resolution");
+					ImGui::Text("Soft Shadows");
 					ImGui::TableNextColumn();
-					ImGui::SliderInt("##ShadowMapResolution", &shadowResIdx, 0, 4, resNames[shadowResIdx]);
-					cLight.ShadowMapResolution = (1 << shadowResIdx) << 8;
+					ImGui::Checkbox("##SoftShadows", &cLight.SoftShadows);
 
 					ImGui::TableNextColumn();
-					ImGui::Text("Bias Constant");
+					ImGui::Text("Light Size");
 					ImGui::TableNextColumn();
-					ImGui::DragFloat("##BiasConstant", &cLight.DepthBiasConstant, 0.01f, 0.01f, 10'000.0f, "%.2f");
-					cLight.DepthBiasConstant = std::clamp(cLight.DepthBiasConstant, 0.01f, 50.0f);
+					ImGui::DragFloat("##LightSize", &cLight.LightSize, 0.1f, 0.1f, 100.0f, "%.2f");
 
 					ImGui::TableNextColumn();
-					ImGui::Text("Bias Slope");
+					ImGui::Text("Shadow Amount");
 					ImGui::TableNextColumn();
-					ImGui::DragFloat("##BiasSlope", &cLight.DepthBiasScale, 0.01f, 0.01f, 10'000.0f, "%.2f");
-					cLight.DepthBiasScale = std::clamp(cLight.DepthBiasScale, 0.01f, 50.0f);
-
-					ImGui::TableNextColumn();
-					ImGui::Text("Cascade Split");
-					ImGui::TableNextColumn();
-					ImGui::DragFloat("##CascadeSplitLambda", &cLight.CascadeSplitLambda, 0.05f, 0.5f, 1.0f, "%.2f");
+					ImGui::DragFloat("##ShadowAmount", &cLight.ShadowAmount, 0.1f, 0.01f, 100.0f, "%.2f");
 				}
 
 				ImGui::EndTable();

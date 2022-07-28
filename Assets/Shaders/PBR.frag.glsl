@@ -1,238 +1,307 @@
 #version 450 core
 
-layout(location = 0) in vec3 inWorldPos;
-layout(location = 1) in vec3 inViewPos;
-layout(location = 2) in vec3 inNormal;
-layout(location = 3) in vec2 inUV0;
+const float Epsilon = 0.00001;
+const float Pi = 3.141592;
+const int ShadowCascadeCount = 4;
+const float TwoPi = 2 * Pi;
+
+const vec2 PoissonDistribution[64] = vec2[](
+	vec2(-0.884081, 0.124488),
+	vec2(-0.714377, 0.027940),
+	vec2(-0.747945, 0.227922),
+	vec2(-0.939609, 0.243634),
+	vec2(-0.985465, 0.045534),
+	vec2(-0.861367, -0.136222),
+	vec2(-0.881934, 0.396908),
+	vec2(-0.466938, 0.014526),
+	vec2(-0.558207, 0.212662),
+	vec2(-0.578447, -0.095822),
+	vec2(-0.740266, -0.095631),
+	vec2(-0.751681, 0.472604),
+	vec2(-0.553147, -0.243177),
+	vec2(-0.674762, -0.330730),
+	vec2(-0.402765, -0.122087),
+	vec2(-0.319776, -0.312166),
+	vec2(-0.413923, -0.439757),
+	vec2(-0.979153, -0.201245),
+	vec2(-0.865579, -0.288695),
+	vec2(-0.243704, -0.186378),
+	vec2(-0.294920, -0.055748),
+	vec2(-0.604452, -0.544251),
+	vec2(-0.418056, -0.587679),
+	vec2(-0.549156, -0.415877),
+	vec2(-0.238080, -0.611761),
+	vec2(-0.267004, -0.459702),
+	vec2(-0.100006, -0.229116),
+	vec2(-0.101928, -0.380382),
+	vec2(-0.681467, -0.700773),
+	vec2(-0.763488, -0.543386),
+	vec2(-0.549030, -0.750749),
+	vec2(-0.809045, -0.408738),
+	vec2(-0.388134, -0.773448),
+	vec2(-0.429392, -0.894892),
+	vec2(-0.131597, 0.065058),
+	vec2(-0.275002, 0.102922),
+	vec2(-0.106117, -0.068327),
+	vec2(-0.294586, -0.891515),
+	vec2(-0.629418, 0.379387),
+	vec2(-0.407257, 0.339748),
+	vec2(0.071650, -0.384284),
+	vec2(0.022018, -0.263793),
+	vec2(0.003879, -0.136073),
+	vec2(-0.137533, -0.767844),
+	vec2(-0.050874, -0.906068),
+	vec2(0.114133, -0.070053),
+	vec2(0.163314, -0.217231),
+	vec2(-0.100262, -0.587992),
+	vec2(-0.004942, 0.125368),
+	vec2(0.035302, -0.619310),
+	vec2(0.195646, -0.459022),
+	vec2(0.303969, -0.346362),
+	vec2(-0.678118, 0.685099),
+	vec2(-0.628418, 0.507978),
+	vec2(-0.508473, 0.458753),
+	vec2(0.032134, -0.782030),
+	vec2(0.122595, 0.280353),
+	vec2(-0.043643, 0.312119),
+	vec2(0.132993, 0.085170),
+	vec2(-0.192106, 0.285848),
+	vec2(0.183621, -0.713242),
+	vec2(0.265220, -0.596716),
+	vec2(-0.009628, -0.483058),
+	vec2(-0.018516, 0.435703)
+	);
+
+struct DirectionalLight {
+	vec3 Direction;
+	float ShadowAmount;
+	vec3 Radiance;
+	float Intensity;
+};
+
+struct VertexIn {
+	vec3 WorldPos;
+	vec3 ViewPos;
+	vec3 Normal;
+	vec2 UV0;
+	mat3 NormalMat;
+	vec4 ShadowCoords[ShadowCascadeCount];
+};
+
+layout(location = 0) in VertexIn In;
 
 layout(set = 0, binding = 0) uniform SceneData {
-	mat4 Projection;
+	mat4 ViewProjection;
 	mat4 View;
-	mat4[4] LightMatrices;
+	mat4 LightMatrices[ShadowCascadeCount];
 	vec4 CascadeSplits;
-	vec4 CameraPos;
-	vec4 SunDirection;
-	int ShadowCascadeCount;
-	int ShadowPCF;
-
-	int DebugShadowCascades;
+	vec4 CameraPosition;
+	DirectionalLight Light;
+	float LightSize;
+	bool SoftShadows;
+	bool ShowCascades;
 } Scene;
-layout(set = 0, binding = 1) uniform sampler2DArray texShadowMap;
+layout(set = 0, binding = 1) uniform sampler2DArray TexShadowMap;
 
 layout(set = 1, binding = 0) uniform MaterialData {
 	vec4 BaseColorFactor;
 	vec4 EmissiveFactor;
-	int HasAlbedo;
-	int HasNormal;
-	int HasPBR;
-	int HasEmissive;
+	bool HasAlbedo;
+	bool HasNormal;
+	bool HasPBR;
+	bool HasEmissive;
 	int AlphaMode;
 	float AlphaCutoff;
 	float Metallic;
 	float Roughness;
 } Material;
-layout(set = 1, binding = 1) uniform sampler2D texAlbedo;
-layout(set = 1, binding = 2) uniform sampler2D texNormal;
-layout(set = 1, binding = 3) uniform sampler2D texPBR;
-layout(set = 1, binding = 4) uniform sampler2D texEmissive;
+layout(set = 1, binding = 1) uniform sampler2D TexAlbedo;
+layout(set = 1, binding = 2) uniform sampler2D TexNormal;
+layout(set = 1, binding = 3) uniform sampler2D TexPBR;
+layout(set = 1, binding = 4) uniform sampler2D TexEmissive;
 
 layout(location = 0) out vec4 outColor;
 
 struct PBRInfo {
-	float NdotL;
-	float NdotV;
-	float NdotH;
-	float LdotH;
-	float VdotH;
-	float PerceptualRoughness;
+	vec3 Albedo;
+	vec3 Normal;
+	vec3 View;
 	float Metallic;
-	vec3 Reflectance0;
-	vec3 Reflectance90;
-	float AlphaRoughness;
-	vec3 DiffuseColor;
-	vec3 SpecularColor;
-};
+	float Roughness;
+	float NdotV;
+	float ShadowFade;
+} PBR;
 
-const float Ambient = 0.15f;
-const mat4 BiasMat = mat4(
-	0.5, 0.0, 0.0, 0.0,
-	0.0, 0.5, 0.0, 0.0,
-	0.0, 0.0, 1.0, 0.0,
-	0.5, 0.5, 0.0, 1.0
-);
-const float Pi = 3.141592653589793;
-
-vec3 Diffuse(PBRInfo pbr) {
-	return pbr.DiffuseColor / Pi;
+vec3 FresnelSchlickRoughness(vec3 F0, float cosTheta, float roughness) {
+	return F0 + (max(vec3(1.0 - roughness), F0), - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
-float GeometricOcclusion(PBRInfo pbr) {
-	float NdotL = pbr.NdotL;
-	float NdotV = pbr.NdotV;
-	float r = pbr.AlphaRoughness;
-
-	float attenuationL = 2.0 * NdotL / (NdotL + sqrt(r * r + (1.0 - r * r) * (NdotL * NdotL)));
-	float attenuationV = 2.0 * NdotV / (NdotV + sqrt(r * r + (1.0 - r * r) * (NdotV * NdotV)));
-	return attenuationL * attenuationV;
+float GaSchlickG1(float cosTheta, float k) {
+	return cosTheta / (cosTheta * (1.0 - k) + k);
 }
 
-vec3 GetNormal() {
-	if (Material.HasNormal == 0) { return normalize(inNormal); }
-
-	vec3 tangentNormal = texture(texNormal, inUV0).xyz * 2.0 - 1.0;
-	vec3 q1 = dFdx(inWorldPos);
-	vec3 q2 = dFdy(inWorldPos);
-	vec2 st1 = dFdx(inUV0);
-	vec2 st2 = dFdy(inUV0);
-
-	vec3 N = normalize(inNormal);
-	vec3 T = normalize(q1 * st2.t - q2 * st1.t);
-	vec3 B = -normalize(cross(N, T));
-	mat3 TBN = mat3(T, B, N);
-
-	return normalize(TBN * tangentNormal);
+float GaSchlickGGX(float cosLi, float NdotV, float roughness) {
+	float r = roughness + 1.0;
+	float k = (r * r) / 8.0;
+	return GaSchlickG1(cosLi, k) * GaSchlickG1(NdotV, k);
 }
 
-vec3 ImageBasedLighting(PBRInfo pbr, vec3 n, vec3 reflection) {
-	vec3 diffuse = pbr.DiffuseColor * vec3(0.15);
+float NdfGGX(float cosLh, float roughness) {
+	float alpha = roughness * roughness;
+	float alphaSq = alpha * alpha;
 
-	return diffuse;
+	float denom = (cosLh * cosLh) * (alphaSq - 1.0) + 1.0;
+	return alphaSq / (Pi * denom * denom);
 }
 
-float MicrofacetDistribution(PBRInfo pbr) {
-	float roughnessSq = pbr.AlphaRoughness * pbr.AlphaRoughness;
-	float f = (pbr.NdotH * roughnessSq - pbr.NdotH) * pbr.NdotH + 1.0;
-	return roughnessSq / (Pi * f * f);
+vec3 DirectionalLights(vec3 F0) {
+	vec3 result = vec3(0.0f);
+
+	vec3 Li = -Scene.Light.Direction;
+	vec3 Lradiance = Scene.Light.Radiance * Scene.Light.Intensity;
+	vec3 Lh = normalize(Li + PBR.View);
+
+	float cosLi = max(0.0, dot(PBR.Normal, Li));
+	float cosLh = max(0.0, dot(PBR.Normal, Lh));
+
+	vec3 F = FresnelSchlickRoughness(F0, max(0.0, dot(Lh, PBR.View)), PBR.Roughness);
+	float D = NdfGGX(cosLh, PBR.Roughness);
+	float G = GaSchlickGGX(cosLi, PBR.NdotV, PBR.Roughness);
+
+	vec3 kD = (1.0 - F) * (1.0 - PBR.Metallic);
+	vec3 diffuseBRDF = kD * PBR.Albedo;
+
+	vec3 specularBRDF = (F * D * G) / max(Epsilon, 4.0 * cosLi * PBR.NdotV);
+	specularBRDF = clamp(specularBRDF, vec3(0.0f), vec3(10.0f));
+
+	result += (diffuseBRDF + specularBRDF) * Lradiance * cosLi;
+
+	return result;
 }
 
-float Shadow(PBRInfo pbr, vec4 shadowCoord, vec2 offset, uint cascadeIndex) {
-	float shadow = 1.0;
-	float ShadowBias = 0.00025f;
-	float bias = ShadowBias + mix(ShadowBias, 0.0f, pbr.NdotL);
-	if (shadowCoord.z > -1.0 && shadowCoord.z < 1.0) {
-		float dist = texture(texShadowMap, vec3(shadowCoord.st + offset, cascadeIndex)).r;
-		if (shadowCoord.w > 0.0 && dist < shadowCoord.z - bias) {
-			shadow = Ambient;
-		}
-	}
-	return shadow;
+float GetShadowBias() {
+	const float MinimumShadowBias = 0.002f;
+	float bias = max(MinimumShadowBias * (1.0 - dot(PBR.Normal, Scene.Light.Direction)), MinimumShadowBias);
+	return bias;
 }
 
-float ShadowPCF(PBRInfo pbr, vec4 shadowCoord, uint cascadeIndex) {
-	ivec2 texDim = textureSize(texShadowMap, 0).xy;
-	float scale = 0.75;
-	float dx = scale * 1.0 / float(texDim.x);
-	float dy = scale * 1.0 / float(texDim.y);
+vec2 SamplePoisson(int index) {
+	return PoissonDistribution[index % 64];
+}
 
-	float shadowFactor = 0.0;
-	int count = 0;
-	int range = 2;
+float PCFDirectional(sampler2DArray shadowMap, uint cascade, vec3 shadowCoords, float uvRadius) {
+	float bias = GetShadowBias();
 
-	for (int x = -range; x <= range; x++) {
-		for (int y = -range; y <= range; y++) {
-			shadowFactor += Shadow(pbr, shadowCoord, vec2(dx * x, dy * y), cascadeIndex);
-			count++;
-		}
+	int samples = 64;
+	float sum = 0;
+	for (int i = 0; i < samples; ++i) {
+		vec2 offset = SamplePoisson(i) * uvRadius;
+		float z = textureLod(shadowMap, vec3((shadowCoords.st) + offset, cascade), 0).r;
+		sum += step(shadowCoords.z - bias, z);
 	}
 
-	return shadowFactor / count;
+	return sum / float(samples);
 }
 
-vec3 SpecularReflection(PBRInfo pbr) {
-	return pbr.Reflectance0 + (pbr.Reflectance90 - pbr.Reflectance0) * pow(clamp(1.0 - pbr.VdotH, 0.0, 1.0), 5.0);
+float PCSSDirectional(sampler2DArray shadowMap, uint cascade, vec3 shadowCoords, float uvLightSize) {
+	float bias = GetShadowBias();
+
+	// Blocker Search Radius UV
+	// const float lightZNear = 0.0f;
+	// const float lightRadiusUV = 0.05f;
+	// float searchWidth = lightRadiusUV * (shadowCoords.z - lightZNear) / shadowCoords.z;
+	float searchWidth = 0.05f;
+
+	// Blocker Search
+	int blockers = 0;
+	float blockerDistance = 0.0f;
+	{
+		int blockerSearchSamples = 64;
+
+		for (int i = 0; i < blockerSearchSamples; ++i) {
+			float z = textureLod(shadowMap, vec3((shadowCoords.st) + SamplePoisson(i) * searchWidth, cascade), 0).r;
+			if (z < (shadowCoords.z - bias)) {
+				blockers++;
+				blockerDistance += z;
+			}
+		}
+
+		if (blockers > 0) { blockerDistance /= float(blockers); }
+	}
+	if (blockers == 0) { return 1.0f; }
+
+	// Determine PCF kernel based on blocker distance
+	float penumbraWidth = (shadowCoords.z - blockerDistance) / blockerDistance;
+	const float near = 0.01f;
+	float uvRadius = penumbraWidth * uvLightSize * near / shadowCoords.z;
+	uvRadius = min(uvRadius, 0.002f);
+
+	//return blockerDistance;
+	return PCFDirectional(shadowMap, cascade, shadowCoords, uvRadius) * PBR.ShadowFade;
+}
+
+float HardShadowsDirectional(sampler2DArray shadowMap, uint cascade, vec3 shadowCoords) {
+	float bias = GetShadowBias();
+	float shadowMapDepth = texture(shadowMap, vec3(shadowCoords.st, cascade)).r;
+	return step(shadowCoords.z, shadowMapDepth + bias) * PBR.ShadowFade;
 }
 
 void main() {
-	// Base Color
-	vec4 baseColor = Material.HasAlbedo == 1 ? texture(texAlbedo, inUV0) : vec4(1, 1, 1, 1);
-	baseColor *= Material.BaseColorFactor;
+	vec4 baseColor = texture(TexAlbedo, In.UV0) * Material.BaseColorFactor;
+	PBR.Albedo = baseColor.rgb;
+	float alpha = baseColor.a;
 
-	// Alpha Cutoff
-	if (Material.AlphaMode == 1) {
-		if (baseColor.a < Material.AlphaCutoff) { discard; }
+	if (Material.AlphaMode == 1 && alpha < Material.AlphaCutoff) { discard; }
+
+	vec4 metalRough = texture(TexPBR, In.UV0);
+	PBR.Metallic = metalRough.b * Material.Metallic;
+	PBR.Roughness = metalRough.g * Material.Roughness;
+	PBR.Roughness = max(PBR.Roughness, 0.05f);
+
+	PBR.Normal = normalize(In.Normal);
+	if (Material.HasNormal) {
+		PBR.Normal = normalize(texture(TexNormal, In.UV0).rgb * 2.0f - 1.0f);
+		PBR.Normal = normalize(In.NormalMat * PBR.Normal);
 	}
 
-	// Metallic/Roughness
-	float perceptualRoughness = Material.Roughness;
-	float metallic = Material.Metallic;
-	if (Material.HasPBR == 1) {
-		vec4 pbr = texture(texPBR, inUV0);
-		perceptualRoughness = pbr.g * perceptualRoughness;
-		metallic = pbr.b * metallic;
-	}
-	perceptualRoughness = clamp(perceptualRoughness, 0.04, 1.0);
-	metallic = clamp(metallic, 0.0, 1.0);
+	PBR.View = normalize(Scene.CameraPosition.xyz - In.WorldPos);
+	PBR.NdotV = max(dot(PBR.Normal, PBR.View), 0.0);
 
-	// Diffuse
-	vec3 f0 = vec3(0.04f);
-	vec3 diffuseColor = baseColor.rgb * (vec3(1.0) - f0);
-	diffuseColor *= 1.0 - metallic;
+	vec3 Lr = 2.0 * PBR.NdotV * PBR.Normal - PBR.View;
+	vec3 F0 = vec3(0.04f);
+	F0 = mix(F0, PBR.Albedo, PBR.Metallic);
 
-	// PBR Info
-	vec3 N = GetNormal();
-	vec3 V = normalize(Scene.CameraPos.xyz - inWorldPos);
-	vec3 L = normalize(-Scene.SunDirection.xyz);
-	vec3 H = normalize(L + V);
-	vec3 specularColor = mix(f0, baseColor.rgb, metallic);
-	float reflectance = max(max(specularColor.r, specularColor.g), specularColor.b);
-	float reflectance90 = clamp(reflectance * 25.0, 0.0, 1.0);
-	vec3 reflection = -normalize(reflect(V, N));
-	reflection.y *= -1.0f;
-	PBRInfo pbr;
-	pbr.NdotL = clamp(dot(N, L), 0.001, 1.0);
-	pbr.NdotV = clamp(abs(dot(N, V)), 0.001, 1.0);
-	pbr.NdotH = clamp(dot(N, H), 0.0, 1.0);
-	pbr.LdotH = clamp(dot(L, H), 0.0, 1.0);
-	pbr.VdotH = clamp(dot(V, H), 0.0, 1.0);
-	pbr.PerceptualRoughness = perceptualRoughness;
-	pbr.Metallic = metallic;
-	pbr.Reflectance0 = specularColor.rgb;
-	pbr.Reflectance90 = vec3(1.0) * reflectance90;
-	pbr.AlphaRoughness = perceptualRoughness * perceptualRoughness;
-	pbr.DiffuseColor = diffuseColor;
-	pbr.SpecularColor = specularColor;
-
-	// Microfacet Model
-	vec3 F = SpecularReflection(pbr);
-	float G = GeometricOcclusion(pbr);
-	float D = MicrofacetDistribution(pbr);
-
-	// Lighting
-	vec3 lightColor = vec3(1.0f);
-	vec3 diffuseContrib = (1.0 - F) * Diffuse(pbr);
-	vec3 specContrib = F * G * D / (4.0 * pbr.NdotL * pbr.NdotV);
-	vec3 color = pbr.NdotL * lightColor * (diffuseContrib + specContrib);
-	color += ImageBasedLighting(pbr, N, reflection);
-
-	// Emission
-	if (Material.HasEmissive == 1) {
-		color += texture(texEmissive, inUV0).rgb;
-	}
-
-	// Shadowing
 	uint cascadeIndex = 0;
-	for (uint i = 0; i < Scene.ShadowCascadeCount - 1; ++i) {
-		if (inViewPos.z < Scene.CascadeSplits[i]) {
-			cascadeIndex = i + 1;
+	for (uint i = 0; i < ShadowCascadeCount - 1; ++i) {
+		if (In.ViewPos.z < Scene.CascadeSplits[i]) { cascadeIndex = i + 1; }
+	}
+	float shadowDistance = 200.0f;
+	float transitionDistance = 1.0f;
+	float distance = length(In.ViewPos);
+	PBR.ShadowFade = distance - (shadowDistance - transitionDistance);
+	PBR.ShadowFade /= transitionDistance;
+	PBR.ShadowFade = clamp(1.0 - PBR.ShadowFade, 0.0, 1.0);
+	float shadowScale = 1.0f;
+	bool fadeCascades = false;
+	if (fadeCascades) {
+		float cascadeTransitionFade = 1.0f;
+
+		float c0 = smoothstep(Scene.CascadeSplits[0] + cascadeTransitionFade * 0.5f, Scene.CascadeSplits[0] - cascadeTransitionFade * 0.5f, In.ViewPos.z);
+		float c1 = smoothstep(Scene.CascadeSplits[1] + cascadeTransitionFade * 0.5f, Scene.CascadeSplits[1] - cascadeTransitionFade * 0.5f, In.ViewPos.z);
+		float c2 = smoothstep(Scene.CascadeSplits[2] + cascadeTransitionFade * 0.5f, Scene.CascadeSplits[2] - cascadeTransitionFade * 0.5f, In.ViewPos.z);
+
+		if (c0 > 0.0 && c0 < 1.0) {
 		}
-	}
-	vec4 shadowCoord = (BiasMat * Scene.LightMatrices[cascadeIndex]) * vec4(inWorldPos, 1.0f);
-	float shadow = 0.0f;
-	if (Scene.ShadowPCF == 1) {
-		shadow = ShadowPCF(pbr, shadowCoord / shadowCoord.w, cascadeIndex);
 	} else {
-		shadow = Shadow(pbr, shadowCoord / shadowCoord.w, vec2(0, 0), cascadeIndex);
+		vec3 shadowCoords = In.ShadowCoords[cascadeIndex].xyz / In.ShadowCoords[cascadeIndex].w;
+		shadowScale = Scene.SoftShadows ? PCSSDirectional(TexShadowMap, cascadeIndex, shadowCoords, Scene.LightSize) : HardShadowsDirectional(TexShadowMap, cascadeIndex, shadowCoords);
 	}
 
-	// Final Color
-	outColor.rgb = color * shadow;
-	outColor.a = baseColor.a;
+	vec3 lightContrib = DirectionalLights(F0) * shadowScale;
 
-	//outColor.rgb = (F + 1.0) * 0.5;
-	//outColor.rgb = F;
-	//outColor.rgb = vec3(G);
+	outColor = vec4(lightContrib, 1.0f);
 
-	if (Scene.DebugShadowCascades == 1) {
+	if (Scene.ShowCascades) {
 		switch(cascadeIndex) {
 			case 0: outColor.rgb *= vec3(1.0f, 0.25f, 0.25f); break;
 			case 1: outColor.rgb *= vec3(0.25f, 1.0f, 0.25f); break;

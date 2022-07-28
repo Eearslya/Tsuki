@@ -18,6 +18,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "mikktspace.h"
+
 using namespace Luna;
 
 GltfLoader::GltfLoader(Luna::Vulkan::WSI& wsi) {
@@ -258,24 +260,82 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 		materials.emplace_back(material);
 	}
 
+	struct PrimitiveContext {
+		AABB Bounds                = {};
+		uint64_t VertexCount       = 0;
+		uint64_t IndexCount        = 0;
+		vk::DeviceSize FirstVertex = 0;
+		vk::DeviceSize FirstIndex  = 0;
+		int IndexStride            = 0;
+		int MaterialIndex          = 0;
+		const void* PositionData   = nullptr;
+		const void* NormalData     = nullptr;
+		const void* TangentData    = nullptr;
+		const void* Texcoord0Data  = nullptr;
+		const void* IndexData      = nullptr;
+
+		std::vector<glm::vec4> Tangents;
+		std::vector<glm::vec3> Bitangents;
+	};
+
+	// Create a MikkTSpace context for tangent generation.
+	SMikkTSpaceContext mikktContext;
+	SMikkTSpaceInterface mikktInterface;
+	{
+		mikktInterface.m_getNumFaces = [](const SMikkTSpaceContext* context) -> int {
+			const auto data = reinterpret_cast<const PrimitiveContext*>(context->m_pUserData);
+			return data->VertexCount / 3;
+		};
+		mikktInterface.m_getNumVerticesOfFace = [](const SMikkTSpaceContext* context, const int face) -> int { return 3; };
+		mikktInterface.m_getPosition =
+			[](const SMikkTSpaceContext* context, float fvPosOut[], const int face, const int vert) -> void {
+			const auto data  = reinterpret_cast<const PrimitiveContext*>(context->m_pUserData);
+			const size_t idx = face * 3 + vert;
+			auto pos         = reinterpret_cast<const float*>(data->PositionData);
+			fvPosOut[0]      = pos[idx + 0];
+			fvPosOut[1]      = pos[idx + 1];
+			fvPosOut[2]      = pos[idx + 2];
+		};
+		mikktInterface.m_getNormal =
+			[](const SMikkTSpaceContext* context, float fvNormOut[], const int face, const int vert) -> void {
+			const auto data  = reinterpret_cast<const PrimitiveContext*>(context->m_pUserData);
+			const size_t idx = face * 3 + vert;
+			auto norm        = reinterpret_cast<const float*>(data->NormalData);
+			fvNormOut[0]     = norm[idx + 0];
+			fvNormOut[1]     = norm[idx + 1];
+			fvNormOut[2]     = norm[idx + 2];
+		};
+		mikktInterface.m_getTexCoord =
+			[](const SMikkTSpaceContext* context, float fvTexcOut[], const int face, const int vert) -> void {
+			const auto data  = reinterpret_cast<const PrimitiveContext*>(context->m_pUserData);
+			const size_t idx = face * 2 + vert;
+			auto uv          = reinterpret_cast<const float*>(data->Texcoord0Data);
+			fvTexcOut[0]     = uv[idx + 0];
+			fvTexcOut[1]     = uv[idx + 1];
+		};
+		mikktInterface.m_setTSpaceBasic =
+			[](
+				const SMikkTSpaceContext* context, const float fvTangent[], const float fSign, const int face, const int vert) {
+				auto data        = reinterpret_cast<PrimitiveContext*>(context->m_pUserData);
+				const size_t idx = face * 3 + vert;
+				const auto norm  = reinterpret_cast<const float*>(data->NormalData);
+
+				const glm::vec3 N = glm::make_vec3(&norm[idx]);
+				const glm::vec4 T = glm::make_vec4(fvTangent);
+				const glm::vec3 B = fSign * glm::cross(N, glm::vec3(T));
+
+				data->Tangents[idx]   = T;
+				data->Bitangents[idx] = B;
+			};
+		mikktInterface.m_setTSpace = nullptr;
+
+		mikktContext.m_pInterface = &mikktInterface;
+	}
+
 	std::vector<IntrusivePtr<Mesh>> meshes;
 	for (size_t i = 0; i < gltfModel.meshes.size(); ++i) {
 		const auto& gltfMesh = gltfModel.meshes[i];
 		Mesh mesh;
-
-		struct PrimitiveContext {
-			AABB Bounds                = {};
-			uint64_t VertexCount       = 0;
-			uint64_t IndexCount        = 0;
-			vk::DeviceSize FirstVertex = 0;
-			vk::DeviceSize FirstIndex  = 0;
-			int IndexStride            = 0;
-			int MaterialIndex          = 0;
-			const void* PositionData   = nullptr;
-			const void* NormalData     = nullptr;
-			const void* Texcoord0Data  = nullptr;
-			const void* IndexData      = nullptr;
-		};
 
 		vk::DeviceSize totalVertexCount = 0;
 		vk::DeviceSize totalIndexCount  = 0;
@@ -310,6 +370,8 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 						data.PositionData = bufferData;
 					} else if (attributeName.compare("NORMAL") == 0) {
 						data.NormalData = bufferData;
+					} else if (attributeName.compare("TANGENT") == 0) {
+						data.TangentData = bufferData;
 					} else if (attributeName.compare("TEXCOORD_0") == 0) {
 						data.Texcoord0Data = bufferData;
 					}
@@ -327,6 +389,26 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 					data.IndexStride = bufferStride;
 				}
 
+				if (data.TangentData == nullptr) {
+					data.Tangents.resize(data.VertexCount);
+					data.Bitangents.resize(data.VertexCount);
+					data.TangentData = data.Tangents.data();
+
+					mikktContext.m_pUserData = &data;
+					genTangSpaceDefault(&mikktContext);
+				} else {
+					data.Bitangents.resize(data.VertexCount);
+					for (size_t i = 0; i < data.VertexCount; ++i) {
+						const auto norm = reinterpret_cast<const float*>(data.NormalData);
+						const auto tang = reinterpret_cast<const float*>(data.TangentData);
+
+						const glm::vec3 N = glm::make_vec3(&norm[i]);
+						const glm::vec4 T = glm::make_vec4(&tang[i]);
+
+						data.Bitangents[i] = glm::cross(N, glm::vec3(T)) * T.w;
+					}
+				}
+
 				data.FirstVertex = totalVertexCount;
 				data.FirstIndex  = totalIndexCount;
 				totalVertexCount += data.VertexCount;
@@ -336,14 +418,19 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 
 		const vk::DeviceSize totalPositionSize  = ((totalVertexCount * sizeof(glm::vec3)) + 16llu) & ~16llu;
 		const vk::DeviceSize totalNormalSize    = ((totalVertexCount * sizeof(glm::vec3)) + 16llu) & ~16llu;
+		const vk::DeviceSize totalTangentSize   = ((totalVertexCount * sizeof(glm::vec3)) + 16llu) & ~16llu;
+		const vk::DeviceSize totalBitangentSize = ((totalVertexCount * sizeof(glm::vec3)) + 16llu) & ~16llu;
 		const vk::DeviceSize totalTexcoord0Size = ((totalVertexCount * sizeof(glm::vec2)) + 16llu) & ~16llu;
 		const vk::DeviceSize totalIndexSize     = ((totalIndexCount * sizeof(uint32_t)) + 16llu) & ~16llu;
-		const vk::DeviceSize bufferSize         = totalPositionSize + totalNormalSize + totalTexcoord0Size + totalIndexSize;
+		const vk::DeviceSize bufferSize =
+			totalPositionSize + totalNormalSize + totalTangentSize + totalBitangentSize + totalTexcoord0Size + totalIndexSize;
 
-		mesh.PositionOffset   = 0;
-		mesh.NormalOffset     = totalPositionSize;
-		mesh.Texcoord0Offset  = totalPositionSize + totalNormalSize;
-		mesh.IndexOffset      = totalPositionSize + totalNormalSize + totalTexcoord0Size;
+		mesh.PositionOffset  = 0;
+		mesh.NormalOffset    = totalPositionSize;
+		mesh.TangentOffset   = totalPositionSize + totalNormalSize;
+		mesh.BitangentOffset = totalPositionSize + totalNormalSize + totalTangentSize;
+		mesh.Texcoord0Offset = totalPositionSize + totalNormalSize + totalTangentSize + totalBitangentSize;
+		mesh.IndexOffset = totalPositionSize + totalNormalSize + totalTangentSize + totalBitangentSize + totalTexcoord0Size;
 		mesh.TotalVertexCount = totalVertexCount;
 		mesh.TotalIndexCount  = totalIndexCount;
 
@@ -351,8 +438,12 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 		bufferData.reset(new uint8_t[bufferSize]);
 		uint8_t* positionCursor  = bufferData.get();
 		uint8_t* normalCursor    = bufferData.get() + totalPositionSize;
-		uint8_t* texcoord0Cursor = bufferData.get() + totalPositionSize + totalNormalSize;
-		uint8_t* indexCursor     = bufferData.get() + totalPositionSize + totalNormalSize + totalTexcoord0Size;
+		uint8_t* tangentCursor   = bufferData.get() + totalPositionSize + totalNormalSize;
+		uint8_t* bitangentCursor = bufferData.get() + totalPositionSize + totalNormalSize + totalTangentSize;
+		uint8_t* texcoord0Cursor =
+			bufferData.get() + totalPositionSize + totalNormalSize + totalTangentSize + totalBitangentSize;
+		uint8_t* indexCursor = bufferData.get() + totalPositionSize + totalNormalSize + totalTangentSize +
+		                       totalBitangentSize + totalTexcoord0Size;
 
 		{
 			for (size_t prim = 0; prim < gltfMesh.primitives.size(); ++prim) {
@@ -367,6 +458,8 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 
 				const size_t positionSize  = data.VertexCount * sizeof(glm::vec3);
 				const size_t normalSize    = data.VertexCount * sizeof(glm::vec3);
+				const size_t tangentSize   = data.VertexCount * sizeof(glm::vec3);
+				const size_t bitangentSize = data.VertexCount * sizeof(glm::vec3);
 				const size_t texcoord0Size = data.VertexCount * sizeof(glm::vec2);
 				const size_t indexSize     = data.IndexCount * sizeof(uint32_t);
 
@@ -379,6 +472,23 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 					memset(normalCursor, 0, normalSize);
 				}
 				normalCursor += normalSize;
+
+				if (data.TangentData) {
+					glm::vec3* dst       = reinterpret_cast<glm::vec3*>(tangentCursor);
+					const glm::vec4* src = reinterpret_cast<const glm::vec4*>(data.TangentData);
+					for (size_t i = 0; i < data.VertexCount; ++i) { dst[i] = src[i]; }
+				} else {
+					memset(tangentCursor, 0, tangentSize);
+				}
+				tangentCursor += tangentSize;
+
+				if (data.Bitangents.size() > 0) {
+					glm::vec3* dst = reinterpret_cast<glm::vec3*>(bitangentCursor);
+					for (size_t i = 0; i < data.VertexCount; ++i) { dst[i] = data.Bitangents[i]; }
+				} else {
+					memset(bitangentCursor, 0, bitangentSize);
+				}
+				bitangentCursor += bitangentSize;
 
 				if (data.Texcoord0Data) {
 					memcpy(texcoord0Cursor, data.Texcoord0Data, texcoord0Size);

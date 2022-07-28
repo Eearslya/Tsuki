@@ -14,8 +14,8 @@
 #include <Vulkan/WSI.hpp>
 #include <glm/gtx/euler_angles.hpp>
 
+#include "DirectionalLightComponent.hpp"
 #include "GltfLoader.hpp"
-#include "LightComponent.hpp"
 #include "Primitives.hpp"
 #include "SceneHierarchyPanel.hpp"
 #include "SceneRenderer.hpp"
@@ -55,11 +55,11 @@ void Tsuki::Start() {
 	};
 
 	{
-		auto light       = _scene->CreateEntity("Light");
-		auto& xfLight    = light.Transform();
-		auto& cLight     = light.AddComponent<LightComponent>();
-		cLight.Type      = LightType::Directional;
-		xfLight.Rotation = glm::vec3(85.0f, 20.0f, 0.0f);
+		auto light         = _scene->CreateEntity("Light");
+		auto& xfLight      = light.Transform();
+		auto& cLight       = light.AddComponent<DirectionalLightComponent>();
+		xfLight.Rotation   = glm::vec3(85.0f, 20.0f, 0.0f);
+		cLight.SoftShadows = false;
 	}
 
 	{
