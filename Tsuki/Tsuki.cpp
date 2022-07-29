@@ -34,18 +34,11 @@ void Tsuki::Start() {
 			if (key == Luna::Key::F5) { _sceneRenderer->ReloadShaders(); }
 		}
 	};
-
-	_camera       = _scene->CreateEntity("Camera");
-	auto& cCamera = _camera.AddComponent<Luna::CameraComponent>();
-	cCamera.Camera.SetPerspective(cCamera.Camera.GetFovDegrees(), cCamera.Camera.GetZNear(), 500.0f);
-	auto& cameraTransform       = _camera.Transform();
-	cameraTransform.Translation = glm::vec3(-5, 1.5, 0);
-	cameraTransform.Rotation    = glm::vec3(0, 270, 0);
 	Luna::Input::OnMoved += [this](glm::dvec2 pos) {
+		auto camera             = _scene->GetMainCamera();
 		const float sensitivity = 0.1f;
-		if (_mouseControl) {
-			auto& cTransform = _camera.GetComponent<Luna::TransformComponent>();
-			auto& cCamera    = _camera.GetComponent<Luna::CameraComponent>();
+		if (_mouseControl && camera) {
+			auto& cTransform = camera.GetComponent<Luna::TransformComponent>();
 
 			cTransform.Rotation += sensitivity * glm::vec3(pos.y, pos.x, 0.0f);
 			cTransform.Rotation.x = glm::clamp(cTransform.Rotation.x, -89.0f, 89.0f);
@@ -53,6 +46,15 @@ void Tsuki::Start() {
 			if (cTransform.Rotation.y >= 360.0f) { cTransform.Rotation.y -= 360.0f; }
 		}
 	};
+
+	{
+		auto camera   = _scene->CreateEntity("Camera");
+		auto& cCamera = camera.AddComponent<Luna::CameraComponent>();
+		cCamera.Camera.SetPerspective(cCamera.Camera.GetFovDegrees(), cCamera.Camera.GetZNear(), 500.0f);
+		auto& cameraTransform       = camera.Transform();
+		cameraTransform.Translation = glm::vec3(-5, 1.5, 0);
+		cameraTransform.Rotation    = glm::vec3(0, 270, 0);
+	}
 
 	{
 		auto light          = _scene->CreateEntity("Light");
@@ -109,7 +111,7 @@ void Tsuki::Update(float dt) {
 	if (_mouseControl) {
 		// Note: We cannot use ImGui to determine if the mouse button is released here, because setting the cursor as
 		// hidden disables all ImGui mouse input.
-		if (!Luna::Input::GetButton(Luna::MouseButton::Right)) {
+		if (!Luna::Input::GetButton(Luna::MouseButton::Right) || !camera) {
 			_mouseControl = false;
 			Luna::Input::SetCursorHidden(false);
 		}
@@ -129,7 +131,7 @@ void Tsuki::Update(float dt) {
 			camera.Translate(movement);
 		}
 	} else {
-		if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !io.WantCaptureMouse) {
+		if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !io.WantCaptureMouse && camera) {
 			_mouseControl = true;
 			Luna::Input::SetCursorHidden(true);
 		}

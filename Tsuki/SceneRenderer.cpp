@@ -57,7 +57,7 @@ SceneRenderer::SceneRenderer(Vulkan::WSI& wsi) : _wsi(wsi) {
 			.Width         = width,
 			.Height        = height,
 			.Depth         = 1,
-			.ArrayLayers   = 4,
+			.ArrayLayers   = ShadowCascadeCount,
 			.MipLevels     = 1,
 			.MiscFlags     = Vulkan::ImageCreateFlagBits::ForceArray,
 		};

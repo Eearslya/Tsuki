@@ -27,7 +27,6 @@ class Tsuki : public Luna::Application {
 	std::unique_ptr<GltfLoader> _gltfLoader;
 	std::unique_ptr<SceneRenderer> _sceneRenderer;
 	std::unique_ptr<SceneHierarchyPanel> _scenePanel;
-	Luna::Entity _camera;
 
 	bool _mouseControl = false;
 };
