@@ -445,9 +445,12 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 					ImGui::DragFloat("##LightSize", &cLight.LightSize, 0.1f, 0.1f, 100.0f, "%.2f");
 
 					ImGui::TableNextColumn();
-					ImGui::Text("Shadow Amount");
+					ImGui::Text("Shadow Strength");
 					ImGui::TableNextColumn();
-					ImGui::DragFloat("##ShadowAmount", &cLight.ShadowAmount, 0.1f, 0.01f, 100.0f, "%.2f");
+					float shadowAmount = std::floor(cLight.ShadowAmount * 100.0f);
+					if (ImGui::DragFloat("##ShadowAmount", &shadowAmount, 1.0f, 1.0f, 100.0f, "%.0f%%")) {
+						cLight.ShadowAmount = std::clamp(shadowAmount, 0.0f, 100.0f) / 100.0f;
+					}
 				}
 
 				ImGui::EndTable();

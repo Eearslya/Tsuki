@@ -1,6 +1,9 @@
 #version 450 core
 #extension GL_EXT_control_flow_attributes : require
 
+#define CAST_SHADOWS
+//#define SOFT_SHADOWS
+
 const float Epsilon = 0.00001;
 const float Pi = 3.141592;
 const int ShadowCascadeCount = 4;
@@ -139,7 +142,7 @@ float GetShadowBias() {
 }
 
 vec2 SamplePoisson(int index) {
-	return PoissonDistribution[index % 16];
+	return PoissonDistribution[index & 15];
 }
 
 float PCFDirectional(sampler2DArray shadowMap, uint cascade, vec3 shadowCoords, float uvRadius) {
@@ -222,16 +225,20 @@ void main() {
 
 	uint cascadeIndex = 0;
 	float shadowScale = 1.0f;
-#define CAST_SHADOWS
 #ifdef CAST_SHADOWS
 	if (Scene.CastShadows) {
 		for (uint i = 0; i < ShadowCascadeCount - 1; ++i) {
 			if (In.ViewPos.z < Scene.CascadeSplits[i]) { cascadeIndex = i + 1; }
 		}
 		vec3 shadowCoords = In.ShadowCoords[cascadeIndex].xyz / In.ShadowCoords[cascadeIndex].w;
+#ifdef SOFT_SHADOWS
 		shadowScale = Scene.SoftShadows ? PCSSDirectional(TexShadowMap, cascadeIndex, shadowCoords, Scene.LightSize) : HardShadowsDirectional(TexShadowMap, cascadeIndex, shadowCoords);
+#else
+		shadowScale = HardShadowsDirectional(TexShadowMap, cascadeIndex, shadowCoords);
+#endif
 	}
 #endif
+	shadowScale = 1.0 - clamp(Scene.Light.ShadowAmount - shadowScale, 0.0f, 1.0f);
 
 	vec3 lightContrib = DirectionalLights(F0) * shadowScale;
 

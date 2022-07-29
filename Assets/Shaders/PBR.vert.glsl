@@ -60,10 +60,12 @@ void main() {
 
 	Out.NormalMat = mat3(PC.Model) * mat3(inTangent, inBitangent, inNormal);
 
-	Out.ShadowCoords[0] = Scene.CastShadows ? (BiasMat * Scene.LightMatrices[0]) * vec4(Out.WorldPos, 1.0f) : vec4(0);
-	Out.ShadowCoords[1] = Scene.CastShadows ? (BiasMat * Scene.LightMatrices[1]) * vec4(Out.WorldPos, 1.0f) : vec4(0);
-	Out.ShadowCoords[2] = Scene.CastShadows ? (BiasMat * Scene.LightMatrices[2]) * vec4(Out.WorldPos, 1.0f) : vec4(0);
-	Out.ShadowCoords[3] = Scene.CastShadows ? (BiasMat * Scene.LightMatrices[3]) * vec4(Out.WorldPos, 1.0f) : vec4(0);
+	if (Scene.CastShadows) {
+		Out.ShadowCoords[0] = (BiasMat * Scene.LightMatrices[0]) * vec4(Out.WorldPos, 1.0f);
+		Out.ShadowCoords[1] = (BiasMat * Scene.LightMatrices[1]) * vec4(Out.WorldPos, 1.0f);
+		Out.ShadowCoords[2] = (BiasMat * Scene.LightMatrices[2]) * vec4(Out.WorldPos, 1.0f);
+		Out.ShadowCoords[3] = (BiasMat * Scene.LightMatrices[3]) * vec4(Out.WorldPos, 1.0f);
+	}
 
 	gl_Position = Scene.ViewProjection * vec4(Out.WorldPos, 1.0);
 }

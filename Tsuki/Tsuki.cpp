@@ -55,12 +55,13 @@ void Tsuki::Start() {
 	};
 
 	{
-		auto light         = _scene->CreateEntity("Light");
-		auto& xfLight      = light.Transform();
-		auto& cLight       = light.AddComponent<DirectionalLightComponent>();
-		xfLight.Rotation   = glm::vec3(85.0f, 20.0f, 0.0f);
-		cLight.CastShadows = false;
-		cLight.SoftShadows = false;
+		auto light          = _scene->CreateEntity("Light");
+		auto& xfLight       = light.Transform();
+		auto& cLight        = light.AddComponent<DirectionalLightComponent>();
+		xfLight.Rotation    = glm::vec3(85.0f, 20.0f, 0.0f);
+		cLight.CastShadows  = true;
+		cLight.SoftShadows  = false;
+		cLight.ShadowAmount = 0.85f;
 	}
 
 	if (false) {
