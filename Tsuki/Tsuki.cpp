@@ -140,6 +140,7 @@ void Tsuki::Update(float dt) {
 
 	ImGui::ShowDemoWindow();
 
+	_sceneRenderer->SetImageSize(_wsi->GetFramebufferSize());
 	_sceneRenderer->ShowSettings();
 	_sceneRenderer->Render(cmd, *_scene, _wsi->GetAcquiredIndex());
 	_scenePanel->Render();

@@ -97,9 +97,12 @@ class SceneRenderer {
 	std::vector<Luna::Vulkan::ImageViewHandle> _shadowCascades;
 	std::vector<RendererUniforms> _uniforms;
 
-	bool _shadowPCF = false;
+	uint32_t _shadowResolution = 2048;
 
-	bool _debugCSM         = false;
-	bool _debugCSMSplit    = false;
-	bool _debugFrustumCull = false;
+	// Debug flags / objects
+	bool _debugCSM           = false;
+	bool _debugCSMSplit      = false;
+	bool _debugFrustumCull   = false;
+	bool _usePersistentDepth = false;
+	Luna::Vulkan::ImageHandle _persistentDepth;
 };

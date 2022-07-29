@@ -1,4 +1,5 @@
 #version 450 core
+#extension GL_EXT_control_flow_attributes : require
 
 const float Epsilon = 0.00001;
 const float Pi = 3.141592;
@@ -160,9 +161,6 @@ float PCSSDirectional(sampler2DArray shadowMap, uint cascade, vec3 shadowCoords,
 	float bias = GetShadowBias();
 
 	// Blocker Search Radius UV
-	// const float lightZNear = 0.0f;
-	// const float lightRadiusUV = 0.05f;
-	// float searchWidth = lightRadiusUV * (shadowCoords.z - lightZNear) / shadowCoords.z;
 	const float searchWidth = 0.05f;
 
 	// Blocker Search
@@ -190,7 +188,6 @@ float PCSSDirectional(sampler2DArray shadowMap, uint cascade, vec3 shadowCoords,
 	float uvRadius = penumbraWidth * uvLightSize * near / shadowCoords.z;
 	uvRadius = min(uvRadius, 0.002f);
 
-	//return blockerDistance;
 	return PCFDirectional(shadowMap, cascade, shadowCoords, uvRadius);
 }
 
@@ -225,14 +222,16 @@ void main() {
 
 	uint cascadeIndex = 0;
 	float shadowScale = 1.0f;
+#define CAST_SHADOWS
+#ifdef CAST_SHADOWS
 	if (Scene.CastShadows) {
 		for (uint i = 0; i < ShadowCascadeCount - 1; ++i) {
 			if (In.ViewPos.z < Scene.CascadeSplits[i]) { cascadeIndex = i + 1; }
 		}
 		vec3 shadowCoords = In.ShadowCoords[cascadeIndex].xyz / In.ShadowCoords[cascadeIndex].w;
 		shadowScale = Scene.SoftShadows ? PCSSDirectional(TexShadowMap, cascadeIndex, shadowCoords, Scene.LightSize) : HardShadowsDirectional(TexShadowMap, cascadeIndex, shadowCoords);
-		//shadowScale = HardShadowsDirectional(TexShadowMap, cascadeIndex, shadowCoords);
 	}
+#endif
 
 	vec3 lightContrib = DirectionalLights(F0) * shadowScale;
 

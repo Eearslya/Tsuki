@@ -137,9 +137,9 @@ void SceneRenderer::ReloadShaders() {
 }
 
 void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene, uint32_t frameIndex) {
-	if (frameIndex >= _sceneImages.size()) { return; }
 	Luna::Vulkan::ImageHandle image;
 	if (!_drawToSwapchain && _imageSize != glm::uvec2(0)) {
+		if (frameIndex >= _sceneImages.size()) { return; }
 		image = _sceneImages[frameIndex];
 		if (!image) { return; }
 	}
@@ -200,9 +200,9 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 
 	// Create or destroy our shadow map depending on whether we need shadows.
 	if (castShadows) {
-		if (!_shadowMap) {
-			Vulkan::ImageCreateInfo imageCI =
-				Vulkan::ImageCreateInfo::RenderTarget(2048, 2048, _wsi.GetDevice().GetDefaultDepthFormat());
+		if (!_shadowMap || _shadowMap->GetCreateInfo().Width != _shadowResolution) {
+			Vulkan::ImageCreateInfo imageCI = Vulkan::ImageCreateInfo::RenderTarget(
+				_shadowResolution, _shadowResolution, _wsi.GetDevice().GetDefaultDepthFormat());
 			imageCI.ArrayLayers = ShadowCascadeCount;
 			imageCI.Usage |= vk::ImageUsageFlagBits::eDepthStencilAttachment;
 			imageCI.Usage |= vk::ImageUsageFlagBits::eSampled;
@@ -287,10 +287,34 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 
 	// Render scene.
 	{
+		Vulkan::ImageHandle depth;
+		if (_usePersistentDepth) {
+			depth = _persistentDepth;
+
+			cmd->ImageBarrier(*depth,
+			                  vk::ImageLayout::eUndefined,
+			                  vk::ImageLayout::eDepthStencilAttachmentOptimal,
+			                  vk::PipelineStageFlagBits::eTopOfPipe,
+			                  {},
+			                  vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests,
+			                  vk::AccessFlagBits::eDepthStencilAttachmentWrite);
+		} else {
+			depth = _wsi.GetDevice().RequestTransientAttachment(vk::Extent2D(_imageSize.x, _imageSize.y),
+			                                                    _wsi.GetDevice().GetDefaultDepthFormat());
+		}
+
 		// Determine if we're rendering to a swapchain image or a normal image (e.g. for ImGui rendering).
 		Vulkan::RenderPassInfo rpInfo;
 		if (_drawToSwapchain) {
-			rpInfo = _wsi.GetDevice().GetStockRenderPass(Vulkan::StockRenderPass::Depth);
+			if (_usePersistentDepth) {
+				rpInfo                        = _wsi.GetDevice().GetStockRenderPass(Vulkan::StockRenderPass::ColorOnly);
+				rpInfo.DepthStencilAttachment = &(depth->GetView());
+				rpInfo.ClearAttachments |= 1 << 1;
+				rpInfo.StoreAttachments |= 1 << 1;
+				rpInfo.DSOps = Vulkan::DepthStencilOpBits::ClearDepthStencil | Vulkan::DepthStencilOpBits::StoreDepthStencil;
+			} else {
+				rpInfo = _wsi.GetDevice().GetStockRenderPass(Vulkan::StockRenderPass::Depth);
+			}
 		} else {
 			cmd->ImageBarrier(*image,
 			                  vk::ImageLayout::eUndefined,
@@ -300,16 +324,17 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 			                  vk::PipelineStageFlagBits::eColorAttachmentOutput,
 			                  vk::AccessFlagBits::eColorAttachmentWrite);
 
-			auto depth = _wsi.GetDevice().RequestTransientAttachment(vk::Extent2D(_imageSize.x, _imageSize.y),
-			                                                         _wsi.GetDevice().GetDefaultDepthFormat());
-
 			rpInfo.ColorAttachmentCount   = 1;
 			rpInfo.ColorAttachments[0]    = &image->GetView();
 			rpInfo.DepthStencilAttachment = &(depth->GetView());
 			rpInfo.ClearAttachments       = 1 << 0 | 1 << 1;
 			rpInfo.StoreAttachments       = 1 << 0;
-			rpInfo.ClearColors[0]         = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f});
-			rpInfo.ClearDepthStencil      = vk::ClearDepthStencilValue(1.0f, 0);
+			if (_usePersistentDepth) {
+				rpInfo.StoreAttachments |= 1 << 1;
+				rpInfo.DSOps = Vulkan::DepthStencilOpBits::ClearDepthStencil | Vulkan::DepthStencilOpBits::StoreDepthStencil;
+			}
+			rpInfo.ClearColors[0]    = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f});
+			rpInfo.ClearDepthStencil = vk::ClearDepthStencilValue(1.0f, 0);
 		}
 
 		Vulkan::RenderPassInfo::SubpassInfo depthPrePass{.DSUsage = Vulkan::DepthStencilUsage::ReadWrite};
@@ -380,18 +405,27 @@ void SceneRenderer::SetDrawToSwapchain(bool drawToSwapchain) {
 }
 
 void SceneRenderer::SetImageSize(const glm::uvec2& size) {
-	if (_drawToSwapchain) { return; }
-
 	if (size != _imageSize) {
 		_imageSize = size;
 		_sceneImages.clear();
 
-		Vulkan::ImageCreateInfo imageCI =
-			Vulkan::ImageCreateInfo::RenderTarget(_imageSize.x, _imageSize.y, vk::Format::eB8G8R8A8Unorm);
-		imageCI.Usage |= vk::ImageUsageFlagBits::eSampled;
+		if (!_drawToSwapchain) {
+			Vulkan::ImageCreateInfo imageCI =
+				Vulkan::ImageCreateInfo::RenderTarget(_imageSize.x, _imageSize.y, vk::Format::eB8G8R8A8Unorm);
+			imageCI.Usage |= vk::ImageUsageFlagBits::eSampled;
 
-		const auto imageCount = _wsi.GetImageCount();
-		for (int i = 0; i < imageCount; ++i) { _sceneImages.push_back(_wsi.GetDevice().CreateImage(imageCI)); }
+			const auto imageCount = _wsi.GetImageCount();
+			for (int i = 0; i < imageCount; ++i) { _sceneImages.push_back(_wsi.GetDevice().CreateImage(imageCI)); }
+		}
+
+		// Persistent depth image, for debugging.
+		if (_usePersistentDepth) {
+			Vulkan::ImageCreateInfo imageCI =
+				Vulkan::ImageCreateInfo::RenderTarget(_imageSize.x, _imageSize.y, _wsi.GetDevice().GetDefaultDepthFormat());
+			_persistentDepth = _wsi.GetDevice().CreateImage(imageCI);
+		} else {
+			_persistentDepth.Reset();
+		}
 	}
 }
 
@@ -659,12 +693,16 @@ void SceneRenderer::ShowSettings() {
 				ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_WidthFixed, 125.0f);
 
 				ImGui::TableNextColumn();
-				ImGui::Text("Shadow PCF");
+				ImGui::Text("Shadow Resolution");
 				ImGui::TableNextColumn();
-				ImGui::Checkbox("##ShadowPCF", &_shadowPCF);
+				const char* shadowRes[] = {"256", "512", "1024", "2048", "4096"};
+				int currentRes          = std::log2(_shadowResolution >> 8);
+				if (ImGui::SliderInt("##ShadowResolution", &currentRes, 0, 4, shadowRes[currentRes])) {
+					_shadowResolution = (1 << currentRes) << 8;
+				}
 
 				ImGui::TableNextColumn();
-				ImGui::Text("Show Splits");
+				ImGui::Text("Show Cascades");
 				ImGui::TableNextColumn();
 				ImGui::Checkbox("##ShowCSMSPlit", &_debugCSMSplit);
 
