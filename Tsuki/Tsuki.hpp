@@ -6,6 +6,7 @@
 #include <memory>
 
 class GltfLoader;
+class HdriLoader;
 class SceneHierarchyPanel;
 class SceneRenderer;
 
@@ -25,6 +26,7 @@ class Tsuki : public Luna::Application {
 	std::unique_ptr<Luna::ImGuiRenderer> _imguiRenderer;
 	std::shared_ptr<Luna::Scene> _scene;
 	std::unique_ptr<GltfLoader> _gltfLoader;
+	std::unique_ptr<HdriLoader> _hdriLoader;
 	std::unique_ptr<SceneRenderer> _sceneRenderer;
 	std::unique_ptr<SceneHierarchyPanel> _scenePanel;
 

@@ -19,6 +19,7 @@
 
 #include "DirectionalLightComponent.hpp"
 #include "IconsFontAwesome6.h"
+#include "SkyboxComponent.hpp"
 
 using namespace Luna;
 
@@ -131,6 +132,10 @@ void SceneRenderer::ReloadShaders() {
 		_wsi.GetDevice().RequestProgram(ReadFile("Assets/Shaders/PBR.vert.glsl"), ReadFile("Assets/Shaders/PBR.frag.glsl"));
 	if (program) { _program = program; }
 
+	auto* skybox = _wsi.GetDevice().RequestProgram(ReadFile("Assets/Shaders/Skybox.vert.glsl"),
+	                                               ReadFile("Assets/Shaders/Skybox.frag.glsl"));
+	if (skybox) { _skybox = skybox; }
+
 	auto* shadows = _wsi.GetDevice().RequestProgram(ReadFile("Assets/Shaders/Shadow.vert.glsl"),
 	                                                ReadFile("Assets/Shaders/Shadow.frag.glsl"));
 	if (shadows) { _shadows = shadows; }
@@ -145,7 +150,7 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 	}
 
 	// Find the important entities for rendering.
-	Entity cameraEntity, sunEntity;
+	Entity cameraEntity, sunEntity, skyEntity;
 	bool castShadows = false;
 	{
 		cameraEntity = scene.GetMainCamera();
@@ -158,6 +163,9 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 			castShadows  = cLight.CastShadows;
 			break;
 		}
+
+		auto skyboxes = scene.GetRegistry().view<SkyboxComponent>();
+		if (!skyboxes.empty()) { skyEntity = Entity(skyboxes.front(), scene); }
 	}
 
 	auto& u = Uniforms(frameIndex);
@@ -177,7 +185,8 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 
 		// u.SceneData->Projection        = cameraProj;
 		// u.SceneData->InvProjection     = glm::inverse(u.SceneData->Projection);
-		u.SceneData->View = cameraView;
+		u.SceneData->View       = cameraView;
+		u.SceneData->Projection = cameraProj;
 		// u.SceneData->InvView           = glm::inverse(u.SceneData->View);
 		u.SceneData->ViewProjection = cameraProj * cameraView;
 		// u.SceneData->InvViewProjection = glm::inverse(u.SceneData->ViewProjection);
@@ -382,6 +391,19 @@ void SceneRenderer::Render(Vulkan::CommandBufferHandle& cmd, Luna::Scene& scene,
 				cmd->SetTexture(0, 1, _defaultImages.WhiteCSM->GetView(), sampler);
 			}
 			RenderMeshes(cmd, scene, cameraEntity, frameIndex, RenderStage::Lighting);
+
+			if (skyEntity) {
+				const auto& cSkybox = skyEntity.GetComponent<SkyboxComponent>();
+				if (cSkybox.Skybox) {
+					cmd->SetOpaqueState();
+					cmd->SetProgram(_skybox);
+					cmd->SetDepthCompareOp(vk::CompareOp::eLessOrEqual);
+					cmd->SetDepthWrite(false);
+					cmd->SetCullMode(vk::CullModeFlagBits::eFront);
+					cmd->SetTexture(1, 0, cSkybox.Skybox->GetView(), Vulkan::StockSampler::LinearClamp);
+					cmd->Draw(36);
+				}
+			}
 		}
 
 		cmd->EndRenderPass();

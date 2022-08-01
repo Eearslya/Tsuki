@@ -131,6 +131,7 @@ Entity GltfLoader::Load(const std::filesystem::path& meshAssetPath, Scene& scene
 		}
 
 		int width, height, components;
+		stbi_set_flip_vertically_on_load(0);
 		stbi_uc* pixels = stbi_load_from_memory(bytes.data(), bytes.size(), &width, &height, &components, STBI_rgb_alpha);
 		if (pixels == nullptr) {
 			Log::Error("AssetManager", "Failed to read texture data for {}, {}: {}", gltfFile, uri, stbi_failure_reason());

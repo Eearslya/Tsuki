@@ -15,6 +15,7 @@ layout(location = 1) in vec2 inUV0;
 layout(set = 0, binding = 0) uniform SceneData {
 	mat4 ViewProjection;
 	mat4 View;
+	mat4 Projection;
 	mat4 LightMatrices[ShadowCascadeCount];
 	vec4 CascadeSplits;
 	vec4 CameraPosition;

@@ -38,6 +38,7 @@ class SceneRenderer {
 	struct SceneData {
 		glm::mat4 ViewProjection;
 		glm::mat4 View;
+		glm::mat4 Projection;
 		glm::mat4 LightMatrices[ShadowCascadeCount];
 		glm::vec4 CascadeSplits;
 		glm::vec4 Position;
@@ -90,6 +91,7 @@ class SceneRenderer {
 	Luna::Vulkan::Program* _depthPre = nullptr;
 	Luna::Vulkan::Program* _program  = nullptr;
 	Luna::Vulkan::Program* _shadows  = nullptr;
+	Luna::Vulkan::Program* _skybox   = nullptr;
 	bool _drawToSwapchain            = true;
 	glm::uvec2 _imageSize            = glm::uvec2(0);
 	std::vector<Luna::Vulkan::ImageHandle> _sceneImages;

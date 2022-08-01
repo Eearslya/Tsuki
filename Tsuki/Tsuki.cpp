@@ -16,15 +16,18 @@
 
 #include "DirectionalLightComponent.hpp"
 #include "GltfLoader.hpp"
+#include "HdriLoader.hpp"
 #include "Primitives.hpp"
 #include "SceneHierarchyPanel.hpp"
 #include "SceneRenderer.hpp"
+#include "SkyboxComponent.hpp"
 #include "UI.hpp"
 
 void Tsuki::Start() {
 	_imguiRenderer = std::make_unique<Luna::ImGuiRenderer>(*_wsi);
 	_scene         = std::make_shared<Luna::Scene>();
 	_gltfLoader    = std::make_unique<GltfLoader>(*_wsi);
+	_hdriLoader    = std::make_unique<HdriLoader>(*_wsi);
 	_sceneRenderer = std::make_unique<SceneRenderer>(*_wsi);
 	_scenePanel    = std::make_unique<SceneHierarchyPanel>(_scene);
 	StyleImGui();
@@ -65,6 +68,8 @@ void Tsuki::Start() {
 		cLight.SoftShadows  = false;
 		cLight.ShadowAmount = 0.85f;
 	}
+
+	{ auto sky = _hdriLoader->Load("Assets/Environments/TokyoBigSight.hdr", *_scene); }
 
 	if (false) {
 		auto model = _gltfLoader->Load("Assets/Models/DeccerCubes/SM_Deccer_Cubes_Textured.gltf", *_scene);

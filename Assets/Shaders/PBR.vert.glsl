@@ -24,6 +24,7 @@ layout(location = 4) in vec3 inBitangent;
 layout(set = 0, binding = 0) uniform SceneData {
 	mat4 ViewProjection;
 	mat4 View;
+	mat4 Projection;
 	mat4 LightMatrices[ShadowCascadeCount];
 	vec4 CascadeSplits;
 	vec4 CameraPosition;

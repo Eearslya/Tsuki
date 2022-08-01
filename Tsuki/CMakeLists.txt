@@ -20,6 +20,7 @@ target_link_libraries(Tsuki
 target_sources(Tsuki PRIVATE
 	mikktspace.cpp
 	GltfLoader.cpp
+	HdriLoader.cpp
 	Primitives.cpp
 	SceneHierarchyPanel.cpp
 	SceneRenderer.cpp

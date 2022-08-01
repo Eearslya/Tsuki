@@ -17,6 +17,7 @@
 
 #include "DirectionalLightComponent.hpp"
 #include "IconsFontAwesome6.h"
+#include "SkyboxComponent.hpp"
 
 using namespace Luna;
 
@@ -78,6 +79,7 @@ void SceneHierarchyPanel::Render() {
 			anyShown |= AddComponentMenu<CameraComponent>(_selected, ICON_FA_CAMERA " Camera");
 			anyShown |= AddComponentMenu<DirectionalLightComponent>(_selected, ICON_FA_SUN " Directional Light");
 			anyShown |= AddComponentMenu<MeshComponent>(_selected, ICON_FA_CIRCLE_NODES " Mesh");
+			anyShown |= AddComponentMenu<SkyboxComponent>(_selected, ICON_FA_GLOBE " Skybox");
 
 			if (!anyShown) {
 				ImGui::BeginDisabled();
@@ -478,6 +480,26 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 			return false;
 		},
 		[](Entity entity, auto& cMesh) {
+			bool deleted = false;
+			if (ImGui::MenuItem(ICON_FA_TRASH_CAN " Remove Component")) { deleted = true; }
+
+			return deleted;
+		});
+
+	// Skybox
+	DrawComponent<SkyboxComponent>(
+		entity,
+		ICON_FA_GLOBE " Skybox",
+		[this](Entity entity, auto& cSkybox) {
+			if (ImGui::BeginTable("SkyboxComponent_Properties", 2, ImGuiTableFlags_BordersInnerV)) {
+				ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_WidthFixed, 125.0f);
+
+				ImGui::EndTable();
+			}
+
+			return false;
+		},
+		[](Entity entity, auto& cCamera) {
 			bool deleted = false;
 			if (ImGui::MenuItem(ICON_FA_TRASH_CAN " Remove Component")) { deleted = true; }
 
